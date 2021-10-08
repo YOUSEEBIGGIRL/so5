@@ -23,18 +23,18 @@ func TestForward(t *testing.T) {
 			continue
 		}
 
-		tarConn, err := getTargetConn(cliConn)
+		tarConn, err := CreateTargetConn(cliConn)
 		if err != nil {
 			// 写入失败的响应信息
-			writeIPv4FailedResponse(cliConn)
+			WriteIPv4FailedResponse(cliConn)
 			log.Println(err)
 			continue
 		}
-		writeIPv4SuccessResponse(cliConn, tarConn)
+		WriteIPv4SuccessResponse(cliConn, tarConn)
 		log.Println(tarConn.LocalAddr())
 
 		// forward 数据
-		if err := forward(cliConn, tarConn); err != nil {
+		if err := Forward(cliConn, tarConn); err != nil {
 			log.Println(err)
 			continue
 		}
@@ -138,13 +138,13 @@ func __readResponse1__(conn net.Conn) (rep byte, err error) {
 	fmt.Printf("atyp: %v\n", atyp)
 
 	// BND.ADDR
-	addr, err := parseAddr(atyp, conn)
+	addr, err := ParseAddr(atyp, conn)
 	if err != nil {
 		return
 	}
 	fmt.Printf("addr: %v\n", addr)
 
-	port, err := parsePort(conn)
+	port, err := ParsePort(conn)
 	if err != nil {
 		return
 	}

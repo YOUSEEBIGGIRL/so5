@@ -23,8 +23,8 @@ const (
 	RSV        = 0x00 // 保留字段
 )
 
-// getTargetConn 从 cliConn 中读取数据，并据此建立到目的地址服务器的连接，之后应该将结果返回给 cliConn
-func getTargetConn(cliConn net.Conn) (targetConn net.Conn, err error) {
+// CreateTargetConn 从 cliConn 中读取数据，并据此建立到目的地址服务器的连接，之后应该将结果返回给 cliConn
+func CreateTargetConn(cliConn net.Conn) (targetConn net.Conn, err error) {
 	cmd, addr, port, err := getRequest(cliConn)
 	if err != nil {
 		return
@@ -64,12 +64,12 @@ func getRequest(conn net.Conn) (cmd byte, addr, port string, err error) {
 
 	_ = rsv // 忽略保留字段
 
-	addr, err = parseAddr(atyp, conn)
+	addr, err = ParseAddr(atyp, conn)
 	if err != nil {
 		return
 	}
 
-	port, err = parsePort(conn)
+	port, err = ParsePort(conn)
 	if err != nil {
 		return
 	}
@@ -78,7 +78,7 @@ func getRequest(conn net.Conn) (cmd byte, addr, port string, err error) {
 }
 
 // parseAddr 根据 ATYP 获得客户要连接的地址
-func parseAddr(atyp byte, conn net.Conn) (addr string, err error) {
+func ParseAddr(atyp byte, conn net.Conn) (addr string, err error) {
 	b := make([]byte, 255)
 	switch atyp {
 
@@ -117,7 +117,7 @@ func parseAddr(atyp byte, conn net.Conn) (addr string, err error) {
 }
 
 // parsePort 解析出 DST.PORT
-func parsePort(conn net.Conn) (port string, err error) {
+func ParsePort(conn net.Conn) (port string, err error) {
 	b := make([]byte, 2)
 
 	_, err = io.ReadFull(conn, b)
@@ -185,8 +185,8 @@ func writeResponse(conn net.Conn,
 	return nil
 }
 
-// writeIPv4SuccessResponse 向 cliConn 中写入 “连接建立成功” 的响应
-func writeIPv4SuccessResponse(cliConn, targetConn net.Conn) (err error) {
+// WriteIPv4SuccessResponse 向 cliConn 中写入 “连接建立成功” 的响应
+func WriteIPv4SuccessResponse(cliConn, targetConn net.Conn) (err error) {
 	addr, port, err := getTargetConnMessage(targetConn)
 	if err != nil {
 		return
@@ -206,8 +206,8 @@ func writeIPv4SuccessResponse(cliConn, targetConn net.Conn) (err error) {
 	return
 }
 
-// writeIPv4SuccessResponse 向 cliConn 中写入 “连接建立失败” 的响应
-func writeIPv4FailedResponse(cliConn net.Conn) (err error) {
+// WriteIPv4SuccessResponse 向 cliConn 中写入 “连接建立失败” 的响应
+func WriteIPv4FailedResponse(cliConn net.Conn) (err error) {
 	// 写入 resp
 	err = writeResponse(cliConn, RepFailed, AtypIPv4, []byte{0, 0}, []byte{0})
 	return

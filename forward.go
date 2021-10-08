@@ -5,7 +5,7 @@ import (
 	"net"
 )
 
-func forward(cliConn, targetConn net.Conn) (err error) {
+func Forward(cliConn, targetConn net.Conn) (err error) {
 	fn := func(dst, src net.Conn) error {
 		_, err := io.Copy(dst, src)
 		return err

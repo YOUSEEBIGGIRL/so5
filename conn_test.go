@@ -33,14 +33,14 @@ func TestGetTargetConn(t *testing.T) {
 			continue
 		}
 
-		tarConn, err := getTargetConn(cliConn)
+		tarConn, err := CreateTargetConn(cliConn)
 		if err != nil {
 			// 写入失败的响应信息
-			writeIPv4FailedResponse(cliConn)
+			WriteIPv4FailedResponse(cliConn)
 			log.Println(err)
 			continue
 		}
-		writeIPv4SuccessResponse(cliConn, tarConn)
+		WriteIPv4SuccessResponse(cliConn, tarConn)
 		log.Println(tarConn.LocalAddr())
 	}
 }
