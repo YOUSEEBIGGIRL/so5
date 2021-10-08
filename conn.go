@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -165,7 +166,7 @@ func dialConn(
 // +-----+-----+-------+------+----------+----------+
 // ATYP	地址类型，0x01=IPv4，0x03=域名，0x04=IPv6
 func writeResponse(conn net.Conn,
-	rep, atyp, bndPort byte, bndAddr []byte) error {
+	rep, atyp byte, bndPort, bndAddr []byte) error {
 
 	var b bytes.Buffer
 
@@ -174,7 +175,7 @@ func writeResponse(conn net.Conn,
 	b.WriteByte(0x00) // RSV
 	b.WriteByte(atyp)
 	b.Write(bndAddr)
-	b.WriteByte(bndPort)
+	b.Write(bndPort)
 
 	_, err := conn.Write(b.Bytes())
 	if err != nil {
@@ -192,17 +193,23 @@ func writeIPv4SuccessResponse(cliConn, targetConn net.Conn) (err error) {
 	}
 
 	ip4 := net.ParseIP(addr).To4()
-	bigPort := binary.BigEndian.Uint16([]byte(port))
+	
+	b := make([]byte, 2)
+	uport, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		return err
+	}
+	binary.BigEndian.PutUint16(b, uint16(uport))
 
 	// 写入 resp
-	err = writeResponse(cliConn, RepSuccess, AtypIPv4, byte(bigPort), ip4)
+	err = writeResponse(cliConn, RepSuccess, AtypIPv4, b, ip4)
 	return
 }
 
 // writeIPv4SuccessResponse 向 cliConn 中写入 “连接建立失败” 的响应
 func writeIPv4FailedResponse(cliConn net.Conn) (err error) {
 	// 写入 resp
-	err = writeResponse(cliConn, RepFailed, AtypIPv4, 0, []byte{0})
+	err = writeResponse(cliConn, RepFailed, AtypIPv4, []byte{0, 0}, []byte{0})
 	return
 }
 

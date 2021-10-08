@@ -120,6 +120,8 @@ func TestTargetServer(t *testing.T) {
 			log.Println(err)
 			continue
 		}
+		add := conn.RemoteAddr()
+		log.Printf("[%v] is coming", add)
 
 		b := make([]byte, 1024)
 
@@ -129,6 +131,7 @@ func TestTargetServer(t *testing.T) {
 			log.Println(err)
 			continue
 		}
+		log.Printf("read from [%v]: %v \n", add, string(b))
 
 		_, err = conn.Write(b[:n])
 		if err != nil {
