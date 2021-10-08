@@ -1,4 +1,4 @@
-package socket5
+package socks5
 
 import (
 	"bytes"
@@ -47,7 +47,6 @@ func TestClientNoAuthRequired(t *testing.T) {
 	log.Println(b)
 }
 
-
 // =============== test for username/password ===============
 func TestAuthUnamePwd(t *testing.T) {
 	l, err := net.Listen("tcp", ":8080")
@@ -90,7 +89,7 @@ func TestClientUnamePwd(t *testing.T) {
 
 	if needMethod == UnamePwd {
 		uname := "abc"
-		pwd := "123"	// true pwd
+		pwd := "123" // true pwd
 		ulen := (byte)(len(uname))
 		plen := (byte)(len(pwd))
 

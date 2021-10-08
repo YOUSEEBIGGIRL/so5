@@ -1,4 +1,4 @@
-package socket5
+package socks5
 
 import (
 	"bytes"
@@ -128,7 +128,7 @@ func __readResponse1__(conn net.Conn) (rep byte, err error) {
 	}
 	rsv := buf[0]
 	fmt.Printf("rsv: %v\n", rsv)
-	
+
 	// ATYP
 	_, err = io.ReadFull(conn, buf[:1])
 	if err != nil {
@@ -136,7 +136,6 @@ func __readResponse1__(conn net.Conn) (rep byte, err error) {
 	}
 	atyp := buf[0]
 	fmt.Printf("atyp: %v\n", atyp)
-
 
 	// BND.ADDR
 	addr, err := parseAddr(atyp, conn)
@@ -151,7 +150,7 @@ func __readResponse1__(conn net.Conn) (rep byte, err error) {
 	}
 	fmt.Printf("port: %v\n", port)
 
-	log.Printf("ver: %v, rep: %v, rsv: %v, atyp: %v addr: %v, port: %v \n", 
-			   ver, rep, rsv, atyp, addr, port)
-	return 
+	log.Printf("ver: %v, rep: %v, rsv: %v, atyp: %v addr: %v, port: %v \n",
+		ver, rep, rsv, atyp, addr, port)
+	return
 }

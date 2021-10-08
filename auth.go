@@ -1,4 +1,4 @@
-package socket5
+package socks5
 
 import (
 	"errors"
@@ -147,7 +147,7 @@ func UnamePwdHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 
 // 如果客户选择了 用户名/密码 协议，那么客户将会发送如下报文：
 // 详见 RFC 1929, https://www.ietf.org/rfc/rfc1929.txt
-// 
+//
 // +----+------+----------+------+----------+
 // |VER | ULEN |  UNAME   | PLEN |  PASSWD  |
 // +----+------+----------+------+----------+

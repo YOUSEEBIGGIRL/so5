@@ -1,4 +1,4 @@
-package socket5
+package socks5
 
 import (
 	"bytes"
@@ -193,7 +193,7 @@ func writeIPv4SuccessResponse(cliConn, targetConn net.Conn) (err error) {
 	}
 
 	ip4 := net.ParseIP(addr).To4()
-	
+
 	b := make([]byte, 2)
 	uport, err := strconv.ParseUint(port, 10, 16)
 	if err != nil {

@@ -1,3 +1,3 @@
-module socket5
+module github.com/zengh1/socks5
 
 go 1.16
