@@ -1,9 +1,10 @@
-package socks5
+package main
 
 import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/zengh1/socks5/util"
 	"io"
 	"log"
 	"net"
@@ -17,7 +18,7 @@ const (
 	AtypIPv4   = 0x01
 	AtypIpv6   = 0x04
 	AtypDomain = 0x03
-	CmdConnect = 0x00
+	CmdConnect = 0x01
 	CmdBind    = 0x02 // not support
 	CmdUdp     = 0x03 // not support
 	RSV        = 0x00 // 保留字段
@@ -29,7 +30,6 @@ func CreateTargetConn(cliConn net.Conn) (targetConn net.Conn, err error) {
 	if err != nil {
 		return
 	}
-
 	// 获取目的服务器的连接
 	targetConn, err = dialConn(cliConn, cmd, addr, port)
 	return
@@ -64,73 +64,15 @@ func getRequest(conn net.Conn) (cmd byte, addr, port string, err error) {
 
 	_ = rsv // 忽略保留字段
 
-	addr, err = ParseAddr(atyp, conn)
+	addr, err = util.ParseAddr(atyp, conn)
 	if err != nil {
 		return
 	}
 
-	port, err = ParsePort(conn)
+	port, err = util.ParsePort(conn)
 	if err != nil {
 		return
 	}
-
-	return
-}
-
-// parseAddr 根据 ATYP 获得客户要连接的地址
-func ParseAddr(atyp byte, conn net.Conn) (addr string, err error) {
-	b := make([]byte, 255)
-	switch atyp {
-
-	case AtypIPv4: // IPv4
-		_, err = io.ReadFull(conn, b[:4])
-		if err != nil {
-			return "",
-				fmt.Errorf("parse atyp 0x01 [IPv4] addr error: %+v", err)
-		}
-		addr = fmt.Sprintf("%v.%v.%v.%v", b[0], b[1], b[2], b[3])
-		return
-	case AtypDomain: // 域名
-		// DST.ADDR 部分第一个字节为域名长度，DST.ADDR剩余的内容为域名，
-		// 没有 0 结尾。
-		_, err = io.ReadFull(conn, b[:1])
-		if err != nil {
-			return "",
-				fmt.Errorf("read atyp 0x03 [domain] len error: %+v", err)
-		}
-		domainLen := b[0]
-
-		_, err = io.ReadFull(conn, b[:domainLen])
-		if err != nil {
-			return "",
-				fmt.Errorf("parse atyp 0x03 [domain] addr error: %+v", err)
-		}
-		addr = string(b[:domainLen])
-		return
-	case AtypIpv6: // IPv6
-		// TODO:
-		return "", fmt.Errorf("IPv6 not support yet")
-
-	default:
-		return "", fmt.Errorf("invalid atyp")
-	}
-}
-
-// parsePort 解析出 DST.PORT
-func ParsePort(conn net.Conn) (port string, err error) {
-	b := make([]byte, 2)
-
-	_, err = io.ReadFull(conn, b)
-	if err != nil {
-		return "", fmt.Errorf("parse port error: %+v", err)
-	}
-
-	// 通过大端获取
-	p := binary.BigEndian.Uint16(b)
-	// port = string(p)
-	// conversion from int to string yields a string of one rune,
-	// not a string of digits (did you mean fmt.Sprint(x)?)
-	port = fmt.Sprint(p)
 
 	return
 }
@@ -139,9 +81,7 @@ func ParsePort(conn net.Conn) (port string, err error) {
 // 0x01=CONNECT, 0x02=BIND, 0x03=UDP ASSOCIATE
 // 之后会将响应返回给客户（写入到 cliConn），返回服务端和
 // 目的地址的连接（targetConn）
-func dialConn(
-	cliConn net.Conn, cmd byte,
-	addr, port string) (targetConn net.Conn, err error) {
+func dialConn(cliConn net.Conn, cmd byte, addr, port string) (targetConn net.Conn, err error) {
 	address := fmt.Sprintf("%s:%s", addr, port)
 	switch cmd {
 	case CmdConnect:
@@ -164,12 +104,27 @@ func dialConn(
 // +-----+-----+-------+------+----------+----------+
 // |  1  |  1  | X'00' |  1   | Variable |    2     |
 // +-----+-----+-------+------+----------+----------+
-// ATYP	地址类型，0x01=IPv4，0x03=域名，0x04=IPv6
-func writeResponse(conn net.Conn,
-	rep, atyp byte, bndPort, bndAddr []byte) error {
-
+//
+// VER  	固定为 0x05，协议版本号
+// REP
+//		· X’00’ 成功
+//		· X’01’ 普通的SOCKS服务器请求失败
+//		· X’02’ 现有的规则不允许的连接
+//		· X’03’ 网络不可达
+//		· X’04’ 主机不可达
+//		· X’05’ 连接被拒
+//		· X’06’ TTL超时
+//		· X’07’ 不支持的命令
+//		· X’08’ 不支持的地址类型
+//		· X’09’ – X’FF’ 未定义
+// RSV		保留位
+// ATYP		地址类型，0x01=IPv4，0x03=域名，0x04=IPv6
+// BND.ADDR 服务器绑定地址
+// BND.PORT	服务器绑定的端口（以网络字节序表示）
+//
+// 传入的 bndPort 需要保证为大端序列
+func writeResponse(conn net.Conn, rep, atyp byte, bndPort, bndAddr []byte) error {
 	var b bytes.Buffer
-
 	b.WriteByte(Version)
 	b.WriteByte(rep)
 	b.WriteByte(0x00) // RSV
@@ -181,7 +136,6 @@ func writeResponse(conn net.Conn,
 	if err != nil {
 		return fmt.Errorf("write response error: %+v", err)
 	}
-
 	return nil
 }
 
@@ -206,7 +160,7 @@ func WriteIPv4SuccessResponse(cliConn, targetConn net.Conn) (err error) {
 	return
 }
 
-// WriteIPv4SuccessResponse 向 cliConn 中写入 “连接建立失败” 的响应
+// WriteIPv4FailedResponse 向 cliConn 中写入 “连接建立失败” 的响应
 func WriteIPv4FailedResponse(cliConn net.Conn) (err error) {
 	// 写入 resp
 	err = writeResponse(cliConn, RepFailed, AtypIPv4, []byte{0, 0}, []byte{0})
@@ -226,9 +180,7 @@ func getTargetConnMessage(targetConn net.Conn) (addr, port string, err error) {
 		err = fmt.Errorf("get BND.ADDR error, need [host:port]")
 		return
 	}
-
 	addr = s[0]
 	port = s[1]
-
 	return
 }

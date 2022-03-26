@@ -1,9 +1,10 @@
-package socks5
+package main
 
 import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 )
 
@@ -22,7 +23,7 @@ const (
 )
 
 // RFC 1928, https://www.ietf.org/rfc/rfc1928.txt
-//
+
 // AuthClient 会对客户的身份进行验证，客户发送的内容格式为：
 // +------+------------+-----------+
 // | VER  | NMETHODS   | METHODS   |	字段名
@@ -41,6 +42,7 @@ const (
 // 0x03 至 X’7F’ IANA 分配(IANA ASSIGNED)
 // 0x80 至 X’FE’ 私人方法保留(RESERVED FOR PRIVATE METHODS)
 // 0xFF 无可接受方法(NO ACCEPTABLE METHODS)
+// method 由服务提供者自行定义
 func AuthClient(cli net.Conn, method Method) error {
 	buf := make([]byte, 255)
 
@@ -52,29 +54,36 @@ func AuthClient(cli net.Conn, method Method) error {
 
 	ver := int(buf[0])
 	nmethods := int(buf[1])
+	log.Printf("ver: %v, nmethods: %v\n", ver, nmethods)
 
 	// socket 版本必须为 5
 	if ver != 5 {
+		log.Println("invalid version")
 		return errors.New("invalid version")
 	}
 
 	// 将用户支持的验证方法全部读出来
 	_, err = io.ReadFull(cli, buf[:nmethods])
 	if err != nil {
+		log.Println("read methods error: " + err.Error())
 		return errors.New("read methods error: " + err.Error())
 	}
 
 	// 将用户支持的验证方法保存到 map 中，主要用于服务端回复检测
 	m := make(map[Method]struct{})
 	for i := 0; i < nmethods; i++ {
-		m[Method(buf[i])] = struct{}{}
+		m[buf[i]] = struct{}{}
 	}
 
 	switch method {
 	case NoAuthRequired:
-		NoAuthRequireHandler(cli, m)
+		if err := NoAuthRequireHandler(cli, m); err != nil {
+			return err
+		}
 	case UnamePwd:
-		UnamePwdHandler(cli, m)
+		if err := UnamePwdHandler(cli, m); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -82,11 +91,11 @@ func AuthClient(cli net.Conn, method Method) error {
 
 // 客户身份验证通过后，服务端会查看客户支持的认证方式，从中选择一种发送给客户，
 // 表示需要客户使用此方式进行验证，回复的报文格式为：
-// +----+--------+
-// |VER | METHOD |
-// +----+--------+
-// | 1  |   1    |
-// +----+--------+
+// +-----+--------+
+// | VER | METHOD |
+// +-----+--------+
+// |  1  |   1    |
+// +-----+--------+
 //
 // VER		本次请求的协议版本号，取固定值 0x05（表示socks 5）
 // METHOD	服务端选定的验证方式
@@ -98,10 +107,12 @@ func NoAuthRequireHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 	if _, ok := cliMethod[NoAuthRequired]; ok {
 		_, err := cli.Write([]byte{Version, NoAuthRequired})
 		if err != nil {
+			log.Println(err)
 			return err
 		}
 		return nil
 	}
+	log.Println("client not support no auth required (0x00) method")
 	return fmt.Errorf("client not support no auth required (0x00) method ")
 }
 
@@ -109,16 +120,19 @@ func NoAuthRequireHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 func UnamePwdHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 	// 客户端也需要支持此认证方式
 	if _, ok := cliMethod[UnamePwd]; !ok {
+		log.Println("client not support username/password (0x02) method ")
 		return fmt.Errorf("client not support username/password (0x02) method ")
 	}
 
 	_, err := cli.Write([]byte{Version, UnamePwd})
 	if err != nil {
+		log.Println("write support method to client error: ", err)
 		return err
 	}
 
 	uname, pwd, err := getUnamePwd(cli)
 	if err != nil {
+		//log.Println("get username and password error: ", err)
 		return err
 	}
 
@@ -133,6 +147,7 @@ func UnamePwdHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 	if ok {
 		_, err = cli.Write([]byte{Version, AuthUserOk})
 		if err != nil {
+			log.Println("write auth result response error: ", err)
 			return err
 		}
 		return nil
@@ -140,6 +155,7 @@ func UnamePwdHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 
 	_, err = cli.Write([]byte{Version, AuthUserFail})
 	if err != nil {
+		log.Println("write auth result response error: ", err)
 		return err
 	}
 	return nil
@@ -174,12 +190,14 @@ func getUnamePwd(cli net.Conn) (uname, pwd string, err error) {
 	ulen := int(buf[1])
 
 	if ver != 5 {
+		log.Println("get username and password error: invalid version")
 		return "", "", fmt.Errorf("invalid version")
 	}
 
 	// 读取 USERNAME
 	_, err = io.ReadFull(cli, buf[:ulen])
 	if err != nil {
+		log.Printf("read USERNAME error: %+v\n", err)
 		return "", "", fmt.Errorf("read USERNAME error: %+v ", err)
 	}
 	uname = string(buf[:ulen])
@@ -187,6 +205,7 @@ func getUnamePwd(cli net.Conn) (uname, pwd string, err error) {
 	// 读取 PLEN
 	_, err = io.ReadFull(cli, buf[:1])
 	if err != nil {
+		log.Printf("read PLEN error: %+v\n", err)
 		return "", "", fmt.Errorf("read PLEN error: %+v ", err)
 	}
 	plen := int(buf[0])
@@ -194,6 +213,7 @@ func getUnamePwd(cli net.Conn) (uname, pwd string, err error) {
 	// 读取 PASSWORD
 	_, err = io.ReadFull(cli, buf[:plen])
 	if err != nil {
+		log.Printf("read PLEN error: %+v\n", err)
 		return "", "", fmt.Errorf("read PLEN error: %+v ", err)
 	}
 	pwd = string(buf[:plen])

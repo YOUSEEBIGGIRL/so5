@@ -1,9 +1,8 @@
-package client
+package main
 
 import (
 	"log"
 	"net"
-	"github.com/zengh1/socks5"
 	"testing"
 )
 

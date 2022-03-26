@@ -1,13 +1,13 @@
-package client
+package main
 
 import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/YOUSEEBIGGIRL/so5/util"
 	"io"
 	"log"
 	"net"
-	"github.com/zengh1/socks5"
 )
 
 const (
@@ -22,8 +22,7 @@ const (
 	RSV        = 0x00 // 保留字段
 )
 
-func WriteRequestIP4(conn net.Conn,
-	targetIP4 []byte, targetPort uint16) error {
+func WriteRequestIP4(conn net.Conn, targetIP4 []byte, targetPort uint16) error {
 	// +----+-----+-------+------+----------+----------+
 	// |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
 	// +----+-----+-------+------+----------+----------+
@@ -95,13 +94,13 @@ func ReadResponse(conn net.Conn) (addr, port string, err error) {
 	//fmt.Printf("atyp: %v\n", atyp)
 
 	// BND.ADDR
-	addr, err = socks5.ParseAddr(atyp, conn)
+	addr, err = util.ParseAddr(atyp, conn)
 	if err != nil {
 		return
 	}
 	//fmt.Printf("addr: %v\n", addr)
 
-	port, err = socks5.ParsePort(conn)
+	port, err = util.ParsePort(conn)
 	if err != nil {
 		return
 	}
@@ -111,5 +110,3 @@ func ReadResponse(conn net.Conn) (addr, port string, err error) {
 		ver, rep, rsv, atyp, addr, port)
 	return
 }
-
-

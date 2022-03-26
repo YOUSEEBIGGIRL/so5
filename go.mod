@@ -1,3 +1,3 @@
-module github.com/zengh1/socks5
+module github.com/YOUSEEBIGGIRL/so5
 
-go 1.16
+go 1.18
