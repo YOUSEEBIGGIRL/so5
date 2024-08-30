@@ -1,28 +1,108 @@
-package main
+package client
 
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
-	"github.com/YOUSEEBIGGIRL/so5/util"
 	"io"
 	"log"
 	"net"
+
+	"zz.io/cargo/so5/consts"
+	"zz.io/cargo/so5/util"
 )
 
-const (
-	RepSuccess = 0x00 // 代理服务器到目的服务器的连接建立成功
-	RepFailed  = 0x01 // 代理服务器到目的服务器的连接建立失败,这里粗略的用 1 代表所有错误情况，实际细分了很多种
-	AtypIPv4   = 0x01
-	AtypIpv6   = 0x04
-	AtypDomain = 0x03
-	CmdConnect = 0x00
-	CmdBind    = 0x02 // not support
-	CmdUdp     = 0x03 // not support
-	RSV        = 0x00 // 保留字段
-)
+// ListenAndServer
+// 客户端运行命令 example:
+// so5 client --listen-addr=127.0.0.1:8080 --proxy-addr=127.0.0.1:8088 --target-addr=127.0.0.1:9090
+// 其他应用通过 127.0.0.1 与 socks5 client 建立连接，然后 socks5 client 转发应用的请求
+// 所以这里的 client 实际上即是 server（对应用而言），也是 client（对 socks5 server 而言）
+func ListenAndServer(addr, proxyAddr, targetAddr string) error {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer lis.Close()
 
-func WriteRequestIP4(conn net.Conn, targetIP4 []byte, targetPort uint16) error {
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			return err
+		}
+		log.Printf("accepted new connection, addr %v", conn.RemoteAddr())
+
+		go func() {
+			if err := Dial(conn, proxyAddr, targetAddr); err != nil {
+				io.WriteString(conn, err.Error())
+				return
+			}
+		}()
+
+	}
+}
+
+func Dial(conn net.Conn, addr, targetAddr string) error {
+	if conn == nil {
+		return nil
+	}
+	defer conn.Close()
+
+	targetConn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer targetConn.Close()
+
+	// TODO: Auth
+	//authMethod, err := NegotiationAuth(conn, supportAuthMethods)
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//switch authMethod {
+	//case consts.AuthTypeNoRequired:
+	//	t.Log("NegotiationAuthMethod: NoRequired")
+	//case consts.AuthTypeUnamePwd:
+	//	if err := client.AuthUseUnamePwd(conn, server.Username, server.Password); err != nil {
+	//		t.Error(err)
+	//		return
+	//	}
+	//case consts.AuthTypeNoAcceptable:
+	//	t.Log("NegotiationAuthMethod: NoAcceptable")
+	//}
+
+	atyp, adr, port, err := util.ParseAddr(targetAddr)
+	if err != nil {
+		return err
+	}
+
+	if err := WriteRequest(targetConn, atyp, adr, port); err != nil {
+		return err
+	}
+
+	_, _, _, err = ReadReplyResponse(targetConn)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		if _, er := io.Copy(targetConn, conn); er != nil {
+			err = er
+			log.Println(err)
+			return
+		}
+	}()
+
+	if _, err := io.Copy(conn, targetConn); err != nil {
+		log.Println(err)
+		return err
+	}
+
+	return err
+}
+
+func WriteRequest(conn net.Conn, atyp byte, addr []byte, targetPort uint16) error {
 	// +----+-----+-------+------+----------+----------+
 	// |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
 	// +----+-----+-------+------+----------+----------+
@@ -30,12 +110,11 @@ func WriteRequestIP4(conn net.Conn, targetIP4 []byte, targetPort uint16) error {
 	// +----+-----+-------+------+----------+----------+
 
 	var b bytes.Buffer
-	b.WriteByte(Version)
-	b.WriteByte(CmdConnect)
-	b.WriteByte(RSV)
-	b.WriteByte(AtypIPv4)
-	// 目的地址为 127.0.0.1:8888
-	b.Write(targetIP4) // DST.ADDR
+	b.WriteByte(consts.Version)
+	b.WriteByte(consts.CmdConnect)
+	b.WriteByte(consts.RSV)
+	b.WriteByte(atyp)
+	b.Write(addr) // DST.ADDR
 
 	pp := make([]byte, 2)
 	// 以大端的方式将 8888 转换为 2 字节
@@ -44,13 +123,15 @@ func WriteRequestIP4(conn net.Conn, targetIP4 []byte, targetPort uint16) error {
 
 	_, err := conn.Write(b.Bytes())
 	if err != nil {
-		return fmt.Errorf("write request to conn error: %+v", err)
+		errMsg := fmt.Errorf("write request to conn error: %+v", err)
+		log.Println(errMsg)
+		return errMsg
 	}
 
 	return nil
 }
 
-func ReadResponse(conn net.Conn) (addr, port string, err error) {
+func ReadReplyResponse(conn net.Conn) (atyp byte, addr, port string, err error) {
 	buf := make([]byte, 255)
 
 	// +-----+-----+-------+------+----------+----------+
@@ -62,25 +143,28 @@ func ReadResponse(conn net.Conn) (addr, port string, err error) {
 	// VER
 	_, err = io.ReadFull(conn, buf[:1])
 	if err != nil {
-		return "", "", fmt.Errorf("read VER error")
+		log.Println(err)
+		if errors.Is(err, io.EOF) {
+			return 0, "", "", nil
+		}
+		return 0, "", "", fmt.Errorf("read reply.VER error: %v", err)
 	}
 	ver := buf[0]
-	//log.Printf("ver: %v \n", ver)
 
 	// REP
 	_, err = io.ReadFull(conn, buf[:1])
 	if err != nil {
-		return "", "", fmt.Errorf("read REP error")
+		return 0, "", "", fmt.Errorf("read reply.REP error")
 	}
 	rep := buf[0]
-	if rep != RepSuccess {
-		return "", "", fmt.Errorf("create conn to target addr error")
+	if rep != consts.RepSuccess {
+		return 0, "", "", fmt.Errorf("create conn to target addr error, REP: %d", rep)
 	}
 
 	// RSV
 	_, err = io.ReadFull(conn, buf[:1])
 	if err != nil {
-		return "", "", fmt.Errorf("read RSV error")
+		return 0, "", "", fmt.Errorf("read RSV error")
 	}
 	rsv := buf[0]
 	//fmt.Printf("rsv: %v\n", rsv)
@@ -88,19 +172,19 @@ func ReadResponse(conn net.Conn) (addr, port string, err error) {
 	// ATYP
 	_, err = io.ReadFull(conn, buf[:1])
 	if err != nil {
-		return "", "", fmt.Errorf("read RSV error")
+		return 0, "", "", fmt.Errorf("read ATYP error")
 	}
-	atyp := buf[0]
+	atyp = buf[0]
 	//fmt.Printf("atyp: %v\n", atyp)
 
 	// BND.ADDR
-	addr, err = util.ParseAddr(atyp, conn)
+	addr, err = util.ParseAddrFromConn(atyp, conn)
 	if err != nil {
 		return
 	}
 	//fmt.Printf("addr: %v\n", addr)
 
-	port, err = util.ParsePort(conn)
+	port, err = util.ParsePortFromConn(conn)
 	if err != nil {
 		return
 	}
