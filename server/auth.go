@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"errors"
@@ -6,32 +6,25 @@ import (
 	"io"
 	"log"
 	"net"
+
+	"zz.io/cargo/so5/consts"
 )
 
 const (
-	Version      = 0x05 // socket5 ver 的默认值
-	AuthUserOk   = 0x00 // 用户验证成功
-	AuthUserFail = 0x01 // 用户验证失败（非 0）
-)
-
-type Method = byte // 认证方式类型
-
-// 服务端支持的认证方式
-const (
-	NoAuthRequired Method = 0x00 // 无需认证
-	UnamePwd       Method = 0x02 // 使用用户名/密码进行认证
+	Username = "root"
+	Password = "root"
 )
 
 // RFC 1928, https://www.ietf.org/rfc/rfc1928.txt
 
-// AuthClient 会对客户的身份进行验证，客户发送的内容格式为：
+// NegotiationAuth 会对客户的身份进行验证，客户发送的内容格式为：
 // +------+------------+-----------+
 // | VER  | NMETHODS   | METHODS   |	字段名
 // +----- +------------+-----------+
 // |  1   |     1      | 1 to 255  |	字节数
 // +------+------------+-----------+
 //
-// VER		本次请求的协议版本号，取固定值 0x05（表示socks 5）
+// VER		本次请求的协议版本号，取固定值 0x05（表示 socks 5）
 // NMETHODS	客户端支持的认证方式数量，可取值 1~255
 // METHODS	可用的认证方式列表
 //
@@ -43,45 +36,56 @@ const (
 // 0x80 至 X’FE’ 私人方法保留(RESERVED FOR PRIVATE METHODS)
 // 0xFF 无可接受方法(NO ACCEPTABLE METHODS)
 // method 由服务提供者自行定义
-func AuthClient(cli net.Conn, method Method) error {
+func NegotiationAuth(conn net.Conn, method byte) error {
 	buf := make([]byte, 255)
 
 	// 使用 ReadFull 保证读满 2 字节的数据，否则返回错误
-	_, err := io.ReadFull(cli, buf[:2])
+	_, err := io.ReadFull(conn, buf[:2])
 	if err != nil {
 		return errors.New("read header[ver, nmethods] error: " + err.Error())
 	}
 
-	ver := int(buf[0])
-	nmethods := int(buf[1])
+	ver := buf[0]
+	nmethods := buf[1]
 	log.Printf("ver: %v, nmethods: %v\n", ver, nmethods)
 
 	// socket 版本必须为 5
-	if ver != 5 {
-		log.Println("invalid version")
-		return errors.New("invalid version")
+	if ver != consts.Version {
+		errMsg := "invalid version"
+		log.Println(errMsg)
+		return errors.New(errMsg)
 	}
 
 	// 将用户支持的验证方法全部读出来
-	_, err = io.ReadFull(cli, buf[:nmethods])
+	_, err = io.ReadFull(conn, buf[:nmethods])
 	if err != nil {
-		log.Println("read methods error: " + err.Error())
-		return errors.New("read methods error: " + err.Error())
+		errMsg := "read methods error: " + err.Error()
+		log.Println(errMsg)
+		return errors.New(errMsg)
 	}
 
 	// 将用户支持的验证方法保存到 map 中，主要用于服务端回复检测
-	m := make(map[Method]struct{})
-	for i := 0; i < nmethods; i++ {
-		m[buf[i]] = struct{}{}
+	clientSupportAutoMethod := make(map[byte]struct{})
+	for i := 0; i < int(nmethods); i++ {
+		clientSupportAutoMethod[buf[i]] = struct{}{}
+	}
+
+	// 服务端提供的验证方法不被客户端接受，客户端收到该报文后应当断开连接
+	if _, ok := clientSupportAutoMethod[method]; !ok {
+		_, err := conn.Write([]byte{consts.Version, consts.AuthTypeNoAcceptable})
+		if err != nil {
+			log.Println(err)
+			return err
+		}
 	}
 
 	switch method {
-	case NoAuthRequired:
-		if err := NoAuthRequireHandler(cli, m); err != nil {
+	case consts.AuthTypeNoRequired:
+		if err := NoAuthRequireHandler(conn); err != nil {
 			return err
 		}
-	case UnamePwd:
-		if err := UnamePwdHandler(cli, m); err != nil {
+	case consts.AuthTypeUnamePwd:
+		if err := UnamePwdHandler(conn); err != nil {
 			return err
 		}
 	}
@@ -97,40 +101,29 @@ func AuthClient(cli net.Conn, method Method) error {
 // |  1  |   1    |
 // +-----+--------+
 //
-// VER		本次请求的协议版本号，取固定值 0x05（表示socks 5）
+// VER		本次请求的协议版本号，取固定值 0x05（表示 socks 5）
 // METHOD	服务端选定的验证方式
 //
 
 // NoAuthRequireHandler 回复客户端，连接不需要进行验证
-func NoAuthRequireHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
-	// 客户端也需要支持此认证方式
-	if _, ok := cliMethod[NoAuthRequired]; ok {
-		_, err := cli.Write([]byte{Version, NoAuthRequired})
-		if err != nil {
-			log.Println(err)
-			return err
-		}
-		return nil
+func NoAuthRequireHandler(conn net.Conn) error {
+	_, err := conn.Write([]byte{consts.Version, consts.AuthTypeNoRequired})
+	if err != nil {
+		log.Println(err)
+		return err
 	}
-	log.Println("client not support no auth required (0x00) method")
-	return fmt.Errorf("client not support no auth required (0x00) method ")
+	return nil
 }
 
 // UnamePwdHandler 回复客户端，连接需要通过 用户名/密码 方式进行验证
-func UnamePwdHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
-	// 客户端也需要支持此认证方式
-	if _, ok := cliMethod[UnamePwd]; !ok {
-		log.Println("client not support username/password (0x02) method ")
-		return fmt.Errorf("client not support username/password (0x02) method ")
-	}
-
-	_, err := cli.Write([]byte{Version, UnamePwd})
+func UnamePwdHandler(conn net.Conn) error {
+	_, err := conn.Write([]byte{consts.Version, consts.AuthTypeUnamePwd})
 	if err != nil {
 		log.Println("write support method to client error: ", err)
 		return err
 	}
 
-	uname, pwd, err := getUnamePwd(cli)
+	uname, pwd, err := getUnamePwd(conn)
 	if err != nil {
 		//log.Println("get username and password error: ", err)
 		return err
@@ -145,7 +138,7 @@ func UnamePwdHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 	// 客户端收到未成功验的状态必须关闭当前连接。
 	ok := authUser(uname, pwd)
 	if ok {
-		_, err = cli.Write([]byte{Version, AuthUserOk})
+		_, err = conn.Write([]byte{consts.Version, consts.AuthUserOk})
 		if err != nil {
 			log.Println("write auth result response error: ", err)
 			return err
@@ -153,7 +146,7 @@ func UnamePwdHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 		return nil
 	}
 
-	_, err = cli.Write([]byte{Version, AuthUserFail})
+	_, err = conn.Write([]byte{consts.Version, consts.AuthUserFail})
 	if err != nil {
 		log.Println("write auth result response error: ", err)
 		return err
@@ -177,33 +170,36 @@ func UnamePwdHandler(cli net.Conn, cliMethod map[Method]struct{}) error {
 // PASSWD 	密码
 //
 // getUnamePwd 从 conn 中读取客户发送的请求报文，并得到 username 和 password
-func getUnamePwd(cli net.Conn) (uname, pwd string, err error) {
+func getUnamePwd(conn net.Conn) (uname, pwd string, err error) {
 	buf := make([]byte, 255)
 
 	// 读取 VER 和 ULEN
-	_, err = io.ReadFull(cli, buf[:2])
+	_, err = io.ReadFull(conn, buf[:2])
 	if err != nil {
 		return "", "", err
 	}
 
-	ver := int(buf[0])
-	ulen := int(buf[1])
+	ver := buf[0]
+	ulen := buf[1]
 
-	if ver != 5 {
-		log.Println("get username and password error: invalid version")
-		return "", "", fmt.Errorf("invalid version")
+	if ver != consts.Version {
+		errMsg := fmt.Errorf("invalid version")
+		log.Println(errMsg)
+		return "", "", errMsg
 	}
 
 	// 读取 USERNAME
-	_, err = io.ReadFull(cli, buf[:ulen])
+	_, err = io.ReadFull(conn, buf[:ulen])
 	if err != nil {
-		log.Printf("read USERNAME error: %+v\n", err)
-		return "", "", fmt.Errorf("read USERNAME error: %+v ", err)
+		errMsg := fmt.Errorf("read USERNAME error: %+v\n", err)
+		log.Println(errMsg)
+		return "", "", errMsg
 	}
+
 	uname = string(buf[:ulen])
 
 	// 读取 PLEN
-	_, err = io.ReadFull(cli, buf[:1])
+	_, err = io.ReadFull(conn, buf[:1])
 	if err != nil {
 		log.Printf("read PLEN error: %+v\n", err)
 		return "", "", fmt.Errorf("read PLEN error: %+v ", err)
@@ -211,7 +207,7 @@ func getUnamePwd(cli net.Conn) (uname, pwd string, err error) {
 	plen := int(buf[0])
 
 	// 读取 PASSWORD
-	_, err = io.ReadFull(cli, buf[:plen])
+	_, err = io.ReadFull(conn, buf[:plen])
 	if err != nil {
 		log.Printf("read PLEN error: %+v\n", err)
 		return "", "", fmt.Errorf("read PLEN error: %+v ", err)
@@ -223,8 +219,11 @@ func getUnamePwd(cli net.Conn) (uname, pwd string, err error) {
 
 // authUser 对用户名和密码进行验证，TODO 使用者自行实现
 func authUser(uname, pwd string) bool {
-	if uname == "abc" && pwd == "123" {
-		return true
+	b := uname == Username && pwd == Password
+	if b {
+		log.Printf("user %v auth success", uname)
+	} else {
+		log.Printf("user %v auth fail", uname)
 	}
-	return false
+	return b
 }
